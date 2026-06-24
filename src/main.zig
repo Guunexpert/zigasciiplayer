@@ -8,56 +8,57 @@ pub extern fn ma_engine_uninit(pEngine: *ma_engine) void;
 pub extern fn ma_engine_play_sound(pEngine: *ma_engine, pFilePath: [*c]const u8, pGroup: ?*anyopaque) c_int;
 
 pub fn main() !void {
-    const stdout = std.io.getStdOut().writer();
+    // ma_engine with stack buffer
+    var raw_ctx: [4096]u8 align(8) = undefined;
+    const sound = @as(*ma_engine, @ptrCast(&raw_ctx));
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator(); 
-
-    const engine_bytes = try allocator.alloc(u8, 4096); 
-    const engine = @as(*ma_engine, @ptrCast(engine_bytes.ptr));
-
-    if (ma_engine_init(null, engine) != MA_SUCCESS) {
-        try stdout.print("failed to initialize audio engine!\n", .{});
+    if (ma_engine_init(null, sound) != MA_SUCCESS) {
+        std.debug.print("failed initialize audio\n", .{});
         return;
     }
-    defer ma_engine_uninit(engine);
-
-    if (ma_engine_play_sound(engine, "bad_apple.mp3", null) != MA_SUCCESS) {
-        try stdout.print("failed to load bad_apple.mp3!\n", .{});
+    defer ma_engine_uninit(sound);
+    if (ma_engine_play_sound(sound, "bad_apple.mp3", null) != MA_SUCCESS) { //you can change mp3 song here
+        std.debug.print("failed to load song\n", .{});
         return;
     }
 
-    var timer = try std.time.Timer.start();
-    const file = std.fs.cwd().openFile("bad_apple_all.txt", .{}) catch {
-        try stdout.print("failed to open bad_apple_all.txt!\n", .{}); 
-        return;
-    };
+    const file = try std.fs.cwd().openFile("bad_apple_all.txt", .{}); //and you can change the txt too :) containing big ascii
     defer file.close();
 
-    const buffer = try file.readToEndAlloc(allocator, 100 * 1024 * 1024);
-    var frame_iterator = std.mem.splitSequence(u8, buffer, "SPLIT");
+    // memory allocation based on file
+    const file_size = (try file.stat()).size;
+    const raw_byte = try std.heap.page_allocator.alloc(u8, file_size);
+    defer std.heap.page_allocator.free(raw_byte); // end program clearing
+    _ = try file.readAll(raw_byte);
 
-    const ms_per_frame: f64 = 66.66;
-    var current_frame_index: u32 = 0;
+    var frames = std.mem.splitSequence(u8, raw_byte, "SPLIT");
+    var timer = try std.time.Timer.start();
 
-    while (frame_iterator.next()) |raw_frame| {
+    const target_fps = 15; // change your fps here based on your ascii txt and extracting frames from ffmpeg
+    const ns_per_frame: u64 = std.time.ns_per_s / target_fps;
+    var count: u64 = 0;
+
+    while (frames.next()) |raw_frame| {
         const frame = std.mem.trim(u8, raw_frame, "\r\n");
         if (frame.len == 0) continue;
 
-        current_frame_index += 1;
-        const ideal_time_ms = @as(f64, @floatFromInt(current_frame_index)) * ms_per_frame;
-        const elapsed_ms = @as(f64, @floatFromInt(timer.read())) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+        count += 1;
+        const target = count * ns_per_frame;
+        const current = timer.read();
 
-        if (elapsed_ms < ideal_time_ms) {
-            const delay_ms = ideal_time_ms - elapsed_ms;
-            std.time.sleep(@intFromFloat(delay_ms * @as(f64, std.time.ns_per_ms)));
-        } 
+        if (current < target) {
+            std.time.sleep(target - current);
+        }
 
-        try stdout.print("\x1B[2J\x1B[H", .{});
-        try stdout.print("{s}\n", .{frame});
-        try stdout.print("--------------------------------------------------\n", .{});
-        try stdout.print("zig bad apple, Frame: {d}, delta timing: {d} ms\n", .{ current_frame_index, @as(i32, @intFromFloat(elapsed_ms - ideal_time_ms)) });
+        const diff: i64 = @intCast(current);
+        const delta = @divTrunc(diff - @as(i64, @intCast(target)), std.time.ns_per_ms);
+        
+        std.debug.print("\x1B[2J\x1B[H{s}\n--------------------------------------------------\nzig ascii, frame: {d}, delta: {d} ms\n", .{ 
+            frame, 
+            count, 
+            delta 
+        });
     }
-    try stdout.print("\npulang pulang dh selesai\n", .{});
+
+    std.debug.print("\nEND HERE\n", .{});
 }
