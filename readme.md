@@ -20,7 +20,7 @@ well if you want to make your own ASCII art follow this steps
 ### 1. Create Project Directory
 Clone or create your own project directory and this is example for file structure
 ```text
-zigsandbox/
+your_own_project_folder/
 ├── build.zig
 ├── bad_apple.mp3             # bad apple mp3 (or your own mp3)
 ├── bad_apple_all.txt         # your final big ascii txt
